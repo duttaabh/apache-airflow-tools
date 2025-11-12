@@ -6283,7 +6283,7 @@ def cleanup_postgres_connection(**context):
     dag_id=DAG_ID,
     default_args=default_args,
     description="DAG diagnostics system with configuration tracking and extensible analysis",
-    schedule_interval=None,  # Manual trigger
+    schedule=None,  # Manual trigger (compatible with Airflow 2.4+ and 3.x)
     catchup=False,
     tags=["diagnostics", "mwaa", "monitoring", "configuration"],
     params={"analysis_days": 7, "env_name": ENV_NAME, "s3_bucket": S3_BUCKET},
