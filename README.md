@@ -1,6 +1,8 @@
 # Apache Airflow Utilities
 
-A collection of production-ready tools and plugins for Apache Airflow and AWS MWAA (Managed Workflows for Apache Airflow).
+> **Found these tools helpful?** Give us a ⭐ on GitHub to show your support and help others discover these utilities!
+
+A collection of **non-production-ready** tools and plugins for Apache Airflow and AWS MWAA (Managed Workflows for Apache Airflow).
 
 ## Tools Overview
 
