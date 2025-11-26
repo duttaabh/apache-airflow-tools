@@ -2,6 +2,8 @@
 
 Provides alternative API endpoints that accept usernames with forward slashes via query parameters.
 
+> **Found this tools helpful?** Give us a ⭐ on GitHub to show your support and help others discover these utilities!
+> 
 ## Problem
 
 The standard Airflow API uses path parameters:
