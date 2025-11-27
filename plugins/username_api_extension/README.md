@@ -30,17 +30,7 @@ Query parameters can contain any characters (when URL-encoded), so slashes work 
 ```bash
 cp username_api_extension.py $AIRFLOW_HOME/plugins/
 ```
-
 **2. Restart Airflow**
-```bash
-# Stop services
-pkill -f "airflow webserver"
-pkill -f "airflow scheduler"
-
-# Start services
-airflow webserver -D
-airflow scheduler -D
-```
 
 **3. Verify Installation**
 ```bash
@@ -56,12 +46,7 @@ username_api_extension     |
 
 **1. Upload Plugin to S3**
 
-Option A: Upload as single file to plugins folder
-```bash
-aws s3 cp username_api_extension.py s3://your-mwaa-bucket/dags/plugins/
-```
-
-Option B: Create plugins.zip
+Create plugins.zip
 ```bash
 cd plugins/username_api_extension
 zip ../plugins.zip username_api_extension.py
@@ -90,18 +75,13 @@ python3 test_api_session.py --mwaa --env-name your-env-name --region us-east-1
 
 ### 4. Test It
 
-**For Basic Authentication:**
-```bash
-curl -X GET "http://localhost:8080/api/v1/users-ext/?username=admin" \
-  -u "admin:admin"
-```
-
 **For Session Authentication (MWAA, default Airflow):**
 ```bash
-# Use the provided test script
+# Use the provided test script to test any local running airflow
 cd plugins/username_api_extension
 python3 test_api_session.py
 ```
+
 
 ## API Endpoints
 
