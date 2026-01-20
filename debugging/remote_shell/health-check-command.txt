@@ -1,0 +1,105 @@
+bash << 'HEALTH_CHECK_EOF'
+echo "================================================================================"
+echo "MWAA WORKER HEALTH CHECK"
+echo "================================================================================"
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo "Hostname: $(cat /etc/hostname 2>/dev/null || uname -n)"
+echo ""
+echo "================================================================================"
+echo "CPU INFORMATION"
+echo "================================================================================"
+echo "CPU Cores: $(grep -c processor /proc/cpuinfo)"
+echo "CPU Usage: $(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1 "%"}')"
+echo "Load Average: $(uptime | awk -F'load average:' '{print $2}' | xargs)"
+echo ""
+echo "Top 5 CPU processes:"
+ps aux --sort=-%cpu | head -6 | awk 'NR==1{print "USER       PID    CPU%   COMMAND"} NR>1{printf "%-10s %-6s %-6s %s\n", $1, $2, $3, substr($0, index($0,$11))}'
+echo ""
+echo "================================================================================"
+echo "MEMORY INFORMATION"
+echo "================================================================================"
+free -h
+echo ""
+echo "Memory %: $(free | grep Mem | awk '{printf "%.1f%% used (%.1fGB / %.1fGB)\n", $3/$2*100, $3/1024/1024, $2/1024/1024}')"
+echo ""
+echo "Top 5 Memory processes:"
+ps aux --sort=-%mem | head -6 | awk 'NR==1{print "USER       PID    MEM%   COMMAND"} NR>1{printf "%-10s %-6s %-6s %s\n", $1, $2, $4, substr($0, index($0,$11))}'
+echo ""
+echo "================================================================================"
+echo "DISK SPACE"
+echo "================================================================================"
+df -h
+echo ""
+echo "Root disk: $(df -h / | tail -1 | awk '{print $3 " used / " $2 " total (" $5 " full), " $4 " available"}')"
+echo ""
+echo "Largest /tmp dirs:"
+du -sh /tmp/* 2>/dev/null | sort -rh | head -5 || echo "Cannot access /tmp"
+echo ""
+echo "================================================================================"
+echo "NETWORK & CONNECTIONS"
+echo "================================================================================"
+echo "Network interfaces:"
+cat /proc/net/dev | awk 'NR>2 {print $1}' | sed 's/:$//' | while read iface; do
+  echo "  $iface: $(cat /sys/class/net/$iface/address 2>/dev/null || echo 'N/A')"
+done
+echo ""
+echo "IP Addresses:"
+cat /etc/hosts | grep -v "^#" | grep -v "^$" | head -5
+echo ""
+echo "TCP Connections:"
+echo "  ESTABLISHED: $(ss -tan 2>/dev/null | grep -c ESTAB || netstat -an 2>/dev/null | grep -c ESTABLISHED || echo 0)"
+echo "  LISTEN: $(ss -tln 2>/dev/null | grep -c LISTEN || netstat -an 2>/dev/null | grep -c LISTEN || echo 0)"
+echo "  TIME_WAIT: $(ss -tan 2>/dev/null | grep -c TIME-WAIT || netstat -an 2>/dev/null | grep -c TIME_WAIT || echo 0)"
+echo ""
+echo "Connection states:"
+ss -tan 2>/dev/null | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn || netstat -an 2>/dev/null | awk '/^tcp/ {print $6}' | sort | uniq -c | sort -rn || echo "Cannot get connection stats"
+echo ""
+echo "================================================================================"
+echo "PROCESS INFORMATION"
+echo "================================================================================"
+echo "Total processes: $(ps aux | wc -l)"
+echo "Python processes: $(ps aux | grep python | grep -v grep | wc -l)"
+echo ""
+echo "Airflow/Celery processes:"
+ps aux | grep -E "airflow|celery" | grep -v grep | awk '{printf "%-10s %-6s %-5s %-5s %s\n", $1, $2, $3"%", $4"%", substr($0, index($0,$11))}' || echo "None found"
+echo ""
+echo "================================================================================"
+echo "SYSTEM LOAD & UPTIME"
+echo "================================================================================"
+uptime
+echo ""
+CORES=$(grep -c processor /proc/cpuinfo)
+cat /proc/loadavg | awk -v cores=$CORES '{printf "Load: 1min=%.2f (%.0f%%), 5min=%.2f (%.0f%%), 15min=%.2f (%.0f%%)\n", $1, ($1/cores)*100, $2, ($2/cores)*100, $3, ($3/cores)*100}'
+echo ""
+echo "================================================================================"
+echo "PYTHON & AIRFLOW"
+echo "================================================================================"
+echo "Python: $(python3 --version 2>&1)"
+echo ""
+echo "Key packages:"
+pip list 2>/dev/null | grep -E "airflow|celery|kombu|redis|boto3" | head -10 || echo "Cannot list"
+echo ""
+echo "Airflow env vars:"
+env | grep AIRFLOW | sort | head -10
+echo ""
+echo "================================================================================"
+echo "FILE DESCRIPTORS"
+echo "================================================================================"
+echo "Open files: $(lsof 2>/dev/null | wc -l || echo 'N/A')"
+echo "FD limit: $(ulimit -n)"
+echo ""
+echo "================================================================================"
+echo "HEALTH SUMMARY"
+echo "================================================================================"
+CPU=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100-$1}')
+MEM=$(free | grep Mem | awk '{print $3/$2*100}')
+DISK=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//')
+LOAD=$(cat /proc/loadavg | awk '{print $1}')
+CORES=$(grep -c processor /proc/cpuinfo)
+printf "CPU: %.1f%% | Memory: %.1f%% | Disk: %s%% | Load: %.2f/%d cores\n" $CPU $MEM $DISK $LOAD $CORES
+echo ""
+if (( $(echo "$CPU < 70" | bc -l 2>/dev/null || echo 0) )); then echo "✅ CPU OK"; else echo "⚠️  CPU HIGH"; fi
+if (( $(echo "$MEM < 80" | bc -l 2>/dev/null || echo 0) )); then echo "✅ Memory OK"; else echo "⚠️  Memory HIGH"; fi
+if (( $DISK < 80 )); then echo "✅ Disk OK"; else echo "⚠️  Disk HIGH"; fi
+echo "================================================================================"
+HEALTH_CHECK_EOF
