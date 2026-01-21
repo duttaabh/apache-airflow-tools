@@ -5,7 +5,7 @@
 ## Environment Details
 
 ### MWAA Environment
-- **Environment Name**: `[e.g., my-mwaa-env, production-airflow]`
+- **Environment Name**: `[e.g. production-airflow]`
 - **MWAA Version**: `[e.g., 2.8.1, 2.7.3, 2.9.0]`
 - **Environment Class**: `[Choose: mw1.small, mw1.medium, mw1.large, mw1.xlarge, mw1.2xlarge]`
 - **Region**: `[e.g., us-east-1, us-west-2, eu-west-1]`
@@ -20,6 +20,7 @@
 ### When Did Issues Start
 `[e.g., 3 days ago, after last deployment, December 20th]`
 
+
 ### Symptoms Observed
 Check all that apply - **AI should look for additional issues beyond these**:
 - [ ] DAG import timeouts
@@ -31,48 +32,6 @@ Check all that apply - **AI should look for additional issues beyond these**:
 - [ ] Zombie/orphaned tasks
 - [ ] Environment updates failing
 - [ ] UI performance issues
-
-### Affected DAGs
-- **Primary DAG(s)**: `[e.g., etl_pipeline, data_sync_dag]`
-- **DAG Characteristics**: `[e.g., dynamic generation, heavy I/O, complex dependencies]`
-
-## Recent Changes
-
-### Last Environment Update
-- **Date**: `[e.g., 2024-01-05, no recent updates]`
-- **What Changed**: `[e.g., added new DAGs, updated requirements.txt, changed environment class]`
-
-### Recent DAG Changes
-- [ ] New DAGs added
-- [ ] Existing DAGs modified  
-- [ ] Dependencies updated
-- [ ] Configuration changes
-- [ ] No recent changes
-
-**Details**: `[Brief description of what changed]`
-
-## Files Provided
-
-### DAG Files
-- [ ] Problematic DAG files included
-- [ ] Supporting modules included
-- [ ] All relevant DAGs included
-
-### Logs  
-- [ ] CloudWatch scheduler logs
-- [ ] CloudWatch worker logs
-- [ ] CloudWatch webserver logs
-- [ ] Task execution logs
-
-### Configuration
-- [ ] Custom airflow.cfg overrides (if any)
-- [ ] requirements.txt
-- [ ] Other configuration files
-
-### Support Files
-- [ ] Timeline or context information
-- [ ] Performance data
-- [ ] Previous troubleshooting notes
 
 ---
 
@@ -112,7 +71,6 @@ Perform a comprehensive root cause analysis of Apache Airflow MWAA environment s
 - MWAA-specific limitations
 
 ### 6. Report Structure
-
 Generate the following reports:
 
 #### Executive Summary
@@ -149,7 +107,7 @@ For each anti-pattern found:
 - Infinite loop tasks analysis
 - Blast radius analysis (which DAGs are affected)
 
-**Priority**: Focus on issues that cause the most business impact first, then address performance optimizations and preventive measures.
+**Priority**: Focus on issues that cause the most operational impact first, then address performance optimizations and preventive measures.
 
 ### Disclaimer Template
 
