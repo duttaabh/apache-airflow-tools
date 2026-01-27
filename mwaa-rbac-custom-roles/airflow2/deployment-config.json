@@ -1,0 +1,58 @@
+[
+  {
+    "ParameterKey": "VpcCIDR",
+    "ParameterValue": "10.192.0.0/16"
+  },
+  {
+    "ParameterKey": "PrivateSubnet1CIDR",
+    "ParameterValue": "10.192.10.0/24"
+  },
+  {
+    "ParameterKey": "PrivateSubnet2CIDR",
+    "ParameterValue": "10.192.11.0/24"
+  },
+  {
+    "ParameterKey": "PrivateSubnet3CIDR",
+    "ParameterValue": "10.192.14.0/24"
+  },
+  {
+    "ParameterKey": "PublicSubnet1CIDR",
+    "ParameterValue": "10.192.20.0/24"
+  },
+  {
+    "ParameterKey": "PublicSubnet2CIDR",
+    "ParameterValue": "10.192.21.0/24"
+  },
+  {
+    "ParameterKey": "MWAAEnvironmentName",
+    "ParameterValue": "mwaa-v5"
+  },
+  {
+    "ParameterKey": "ALBCertificateArn",
+    "ParameterValue": "arn:aws:acm:us-east-1:343218218212:certificate/1961cc10-d818-47be-99ad-bd455046a9e2"
+  },
+  {
+    "ParameterKey": "AzureAdminGroupID",
+    "ParameterValue": "018b2f48-edd5-49fb-9541-4cef1b43ff3e"
+  },
+  {
+    "ParameterKey": "AzureUserGroupID",
+    "ParameterValue": "737f6c94-bf1d-4079-a726-6b50db58f558"
+  },
+  {
+    "ParameterKey": "AzureViewerGroupID",
+    "ParameterValue": "8c330ba0-f0c5-4b80-a351-3e7bb29d9741"
+  },
+  {
+    "ParameterKey": "AzureCustomGroupID",
+    "ParameterValue": "a3255ab9-b779-405d-8a65-baafac5fc071"
+  },
+  {
+    "ParameterKey": "EntraIDLoginURL",
+    "ParameterValue": "https://login.microsoftonline.com/ae057b81-d76b-4aa7-911b-fce1a011a9a1/saml2"
+  },
+  {
+    "ParameterKey": "AppFederationMetadataURL",
+    "ParameterValue": "https://login.microsoftonline.com/ae057b81-d76b-4aa7-911b-fce1a011a9a1/federationmetadata/2007-06/federationmetadata.xml?appid=f219ea68-8d27-40a8-8ba1-d93f2acbc497"
+  }
+]
