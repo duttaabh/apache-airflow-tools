@@ -822,6 +822,7 @@ Resources:
     Type: AWS::MWAA::Environment
     DependsOn: MwaaS3Bucket
     Properties:
+      AirflowVersion: "3.0.6"
       DagS3Path:  dags
       ExecutionRoleArn: !GetAtt MwaaExecutionRole.Arn
       LoggingConfiguration:

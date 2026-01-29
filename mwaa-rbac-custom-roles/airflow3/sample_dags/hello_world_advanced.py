@@ -13,9 +13,9 @@ from airflow.operators.empty import EmptyOperator
 
 def greet_user(**context):
     """Function to greet with execution date"""
-    execution_date = context['execution_date']
-    print(f"Hello! DAG executed on: {execution_date}")
-    return f"Greeting sent at {execution_date}"
+    logical_date = context['logical_date']
+    print(f"Hello! DAG executed on: {logical_date}")
+    return f"Greeting sent at {logical_date}"
 
 
 def process_data(**context):
@@ -61,14 +61,11 @@ with DAG(
     dag_id='hello_world_advanced',
     default_args=default_args,
     description='An advanced Hello World DAG with parallel tasks',
-    schedule_interval='0 8 * * *',  # Run daily at 8 AM
+    schedule='0 8 * * *',  # Run daily at 8 AM
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['example', 'hello_world', 'advanced'],
     max_active_runs=1,
-    access_control={
-        'Restricted': {'can_read', 'can_edit'},
-    },
 ) as dag:
 
     # Start task
@@ -80,7 +77,6 @@ with DAG(
     greet = PythonOperator(
         task_id='greet_user',
         python_callable=greet_user,
-        provide_context=True,
     )
 
     # Parallel bash tasks
@@ -103,21 +99,18 @@ with DAG(
     process = PythonOperator(
         task_id='process_data',
         python_callable=process_data,
-        provide_context=True,
     )
 
     # Analysis task
     analyze = PythonOperator(
         task_id='analyze_results',
         python_callable=analyze_results,
-        provide_context=True,
     )
 
     # Notification task
     notify = PythonOperator(
         task_id='send_notification',
         python_callable=send_notification,
-        provide_context=True,
     )
 
     # End task

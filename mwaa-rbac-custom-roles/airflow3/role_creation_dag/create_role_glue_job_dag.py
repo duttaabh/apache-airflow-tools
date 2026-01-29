@@ -10,7 +10,7 @@ This DAG:
 Trigger with configuration:
 {
   "aws_region": "us-east-1",
-  "stack_name": "mwaa-v3",
+  "stack_name": "{{VPC_STACK_NAME}}",
   "source_role": "User",
   "target_role": "MWAARestrictedTest",
   "specific_dags": ["hello_world_advanced", "hello_world_simple"]
@@ -146,7 +146,7 @@ def get_glue_role_arn(**context):
     # Get parameters from DAG run config
     dag_conf = context['dag_run'].conf or {}
     aws_region = dag_conf.get('aws_region', 'us-east-1')
-    stack_name = dag_conf.get('stack_name', 'mwaa-v3')  # Default to current stack
+    stack_name = dag_conf.get('stack_name', '{{VPC_STACK_NAME}}')  # Replaced by deploy script
     
     cf_client = boto3.client('cloudformation', region_name=aws_region)
     
@@ -176,7 +176,7 @@ def get_s3_bucket_name(**context):
     # Get parameters from DAG run config
     dag_conf = context['dag_run'].conf or {}
     aws_region = dag_conf.get('aws_region', 'us-east-1')
-    stack_name = dag_conf.get('stack_name', 'mwaa-v3')
+    stack_name = dag_conf.get('stack_name', '{{VPC_STACK_NAME}}')  # Replaced by deploy script
     
     cf_client = boto3.client('cloudformation', region_name=aws_region)
     
@@ -285,9 +285,19 @@ JOIN ab_view_menu vm ON pv.view_menu_id = vm.id
 WHERE vm.name IN ('{dag_list}')
 """
 
+# Query for "menu access on DAGs" permission
+dags_menu_query = """
+SELECT pv.id as permission_view_id
+FROM ab_permission_view pv
+JOIN ab_view_menu vm ON pv.view_menu_id = vm.id
+JOIN ab_permission p ON pv.permission_id = p.id
+WHERE vm.name = 'DAGs' AND p.name = 'menu_access'
+"""
+
 non_dag_perms = spark.sql(non_dag_query)
 dag_perms = spark.sql(dag_query)
-all_perms = non_dag_perms.union(dag_perms)
+dags_menu_perm = spark.sql(dags_menu_query)
+all_perms = non_dag_perms.union(dag_perms).union(dags_menu_perm)
 pv_ids = [row.permission_view_id for row in all_perms.collect()]
 
 print(f"Total permissions: {len(pv_ids)}")
@@ -375,7 +385,7 @@ print(f"✓ Role '{TARGET_ROLE}' created successfully!")
     tags=['glue', 'rbac', 'admin'],
     params={
         "aws_region": "us-east-1",
-        "stack_name": "mwaa-v3",
+        "stack_name": "{{VPC_STACK_NAME}}",  # Replaced by deploy script
         "source_role": "User",
         "target_role": "MWAARestrictedTest",
         "specific_dags": ["hello_world_advanced", "hello_world_simple"]
@@ -396,20 +406,16 @@ def create_role_glue_job_dag():
     # Task 4: Upload script
     script_loc = upload_glue_script()
     
-    # Task 5: Run Glue job
+    # Task 5: Create/Update Glue job
     @task()
-    def run_glue_job_task(**context):
-        """Execute the Glue job"""
+    def create_glue_job_task(**context):
+        """Create or update the Glue job definition"""
         dag_conf = context['dag_run'].conf or {}
         aws_region = dag_conf.get('aws_region', 'us-east-1')
-        source_role = dag_conf.get('source_role', 'User')
-        target_role = dag_conf.get('target_role', 'MWAARestrictedTest')
-        specific_dags = dag_conf.get('specific_dags', ['hello_world_advanced', 'hello_world_simple'])
         
         glue_conn_name = context['ti'].xcom_pull(task_ids='create_glue_connection')
         script_location = context['ti'].xcom_pull(task_ids='upload_glue_script')
         glue_role_arn = context['ti'].xcom_pull(task_ids='get_glue_role_arn')
-        s3_bucket = context['ti'].xcom_pull(task_ids='get_s3_bucket_name')
         
         glue_client = boto3.client('glue', region_name=aws_region)
         glue_job_name = f"{ENV_NAME}_create_role"
@@ -429,10 +435,6 @@ def create_role_glue_job_dag():
                 '--enable-metrics': 'true',
                 '--enable-spark-ui': 'true',
                 '--enable-continuous-cloudwatch-log': 'true',
-                '--CONNECTION_NAME': glue_conn_name,
-                '--SOURCE_ROLE': source_role,
-                '--TARGET_ROLE': target_role,
-                '--SPECIFIC_DAGS': json.dumps(specific_dags),
             },
             'MaxRetries': 0,
             'Timeout': 60,
@@ -454,35 +456,81 @@ def create_role_glue_job_dag():
             glue_client.create_job(**job_config)
             print(f"✓ Created Glue job: {glue_job_name}")
         
+        return glue_job_name
+    
+    create_job = create_glue_job_task()
+    
+    # Task 6: Run Glue job using GlueJobOperator
+    @task()
+    def get_glue_job_args(**context):
+        """Prepare Glue job arguments"""
+        dag_conf = context['dag_run'].conf or {}
+        source_role = dag_conf.get('source_role', 'User')
+        target_role = dag_conf.get('target_role', 'MWAARestrictedTest')
+        specific_dags = dag_conf.get('specific_dags', ['hello_world_advanced', 'hello_world_simple'])
+        
+        glue_conn_name = context['ti'].xcom_pull(task_ids='create_glue_connection')
+        
+        return {
+            '--CONNECTION_NAME': glue_conn_name,
+            '--SOURCE_ROLE': source_role,
+            '--TARGET_ROLE': target_role,
+            '--SPECIFIC_DAGS': json.dumps(specific_dags),
+        }
+    
+    job_args = get_glue_job_args()
+    
+    # Task 7: Execute Glue job with proper waiting
+    @task()
+    def run_glue_job_task(**context):
+        """Execute the Glue job and wait for completion with proper timeout handling"""
+        dag_conf = context['dag_run'].conf or {}
+        aws_region = dag_conf.get('aws_region', 'us-east-1')
+        target_role = dag_conf.get('target_role', 'MWAARestrictedTest')
+        
+        glue_job_name = context['ti'].xcom_pull(task_ids='create_glue_job_task')
+        job_arguments = context['ti'].xcom_pull(task_ids='get_glue_job_args')
+        
+        glue_client = boto3.client('glue', region_name=aws_region)
+        
         # Start job run
         response = glue_client.start_job_run(
             JobName=glue_job_name,
-            Arguments={
-                '--CONNECTION_NAME': glue_conn_name,
-                '--SOURCE_ROLE': source_role,
-                '--TARGET_ROLE': target_role,
-                '--SPECIFIC_DAGS': json.dumps(specific_dags),
-            }
+            Arguments=job_arguments
         )
         
         job_run_id = response['JobRunId']
         print(f"✓ Started Glue job run: {job_run_id}")
         
-        # Wait for completion
+        # Wait for completion with longer timeout and better error handling
         import time
-        while True:
+        max_wait_time = 1800  # 30 minutes
+        check_interval = 30  # Check every 30 seconds
+        elapsed_time = 0
+        
+        while elapsed_time < max_wait_time:
             response = glue_client.get_job_run(JobName=glue_job_name, RunId=job_run_id)
             status = response['JobRun']['JobRunState']
             
-            if status in ['SUCCEEDED', 'FAILED', 'STOPPED', 'TIMEOUT']:
+            if status in ['SUCCEEDED', 'FAILED', 'STOPPED', 'TIMEOUT', 'ERROR']:
                 break
             
-            print(f"  Job status: {status}")
-            time.sleep(30)
+            print(f"  Job status: {status} (elapsed: {elapsed_time}s)")
+            time.sleep(check_interval)
+            elapsed_time += check_interval
+        
+        # Final status check
+        response = glue_client.get_job_run(JobName=glue_job_name, RunId=job_run_id)
+        status = response['JobRun']['JobRunState']
         
         if status == 'SUCCEEDED':
             print(f"✓ Glue job completed successfully!")
             print(f"✓ Role '{target_role}' created")
+        elif elapsed_time >= max_wait_time:
+            print(f"⚠ Task timeout reached, but Glue job is still running")
+            print(f"  Job Run ID: {job_run_id}")
+            print(f"  Check CloudWatch logs or Glue console for job status")
+            raise AirflowException(f"Task timeout after {max_wait_time}s. Glue job may still be running: {job_run_id}")
         else:
             error_msg = response['JobRun'].get('ErrorMessage', 'Unknown error')
             raise AirflowException(f"Glue job failed with status {status}: {error_msg}")
@@ -492,7 +540,7 @@ def create_role_glue_job_dag():
     run_job = run_glue_job_task()
     
     # Set dependencies - tasks must run sequentially
-    glue_conn >> glue_role >> s3_bucket >> script_loc >> run_job
+    glue_conn >> glue_role >> s3_bucket >> script_loc >> create_job >> job_args >> run_job
 
 # Instantiate the DAG
 create_role_glue_job_dag_instance = create_role_glue_job_dag()
@@ -500,7 +548,7 @@ create_role_glue_job_dag_instance = create_role_glue_job_dag()
 # Example trigger configuration:
 # {
 #   "aws_region": "us-east-1",
-#   "stack_name": "mwaa-v3",
+#   "stack_name": "{{VPC_STACK_NAME}}",  # Replaced by deploy script
 #   "source_role": "User",
 #   "target_role": "MWAARestrictedTest",
 #   "specific_dags": ["hello_world_advanced", "hello_world_simple"]

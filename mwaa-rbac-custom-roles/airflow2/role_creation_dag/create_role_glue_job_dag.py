@@ -10,7 +10,7 @@ This DAG:
 Trigger with configuration:
 {
   "aws_region": "us-east-1",
-  "stack_name": "mwaa-v3",
+  "stack_name": "{{VPC_STACK_NAME}}",
   "source_role": "User",
   "target_role": "MWAARestrictedTest",
   "specific_dags": ["hello_world_advanced", "hello_world_simple"]
@@ -110,7 +110,7 @@ def get_glue_role_arn(**context):
     # Get parameters from DAG run config
     dag_conf = context['dag_run'].conf or {}
     aws_region = dag_conf.get('aws_region', 'us-east-1')
-    stack_name = dag_conf.get('stack_name', 'mwaa-v3')  # Default to current stack
+    stack_name = dag_conf.get('stack_name', '{{VPC_STACK_NAME}}')  # Replaced by deploy script
     
     cf_client = boto3.client('cloudformation', region_name=aws_region)
     
@@ -140,7 +140,7 @@ def get_s3_bucket_name(**context):
     # Get parameters from DAG run config
     dag_conf = context['dag_run'].conf or {}
     aws_region = dag_conf.get('aws_region', 'us-east-1')
-    stack_name = dag_conf.get('stack_name', 'mwaa-v3')
+    stack_name = dag_conf.get('stack_name', '{{VPC_STACK_NAME}}')  # Replaced by deploy script
     
     cf_client = boto3.client('cloudformation', region_name=aws_region)
     
@@ -347,7 +347,7 @@ with DAG(
     tags=['glue', 'rbac', 'admin'],
     params={
         "aws_region": "us-east-1",
-        "stack_name": "mwaa-v3",
+        "stack_name": "{{VPC_STACK_NAME}}",  # Replaced by deploy script
         "source_role": "User",
         "target_role": "MWAARestrictedTest",
         "specific_dags": ["hello_world_advanced", "hello_world_simple"]
@@ -467,7 +467,7 @@ with DAG(
 # Example trigger configuration:
 # {
 #   "aws_region": "us-east-1",
-#   "stack_name": "mwaa-v3",
+#   "stack_name": "{{VPC_STACK_NAME}}",  # Replaced by deploy script
 #   "source_role": "User",
 #   "target_role": "MWAARestrictedTest",
 #   "specific_dags": ["hello_world_advanced", "hello_world_simple"]

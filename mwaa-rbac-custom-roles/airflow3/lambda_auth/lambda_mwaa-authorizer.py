@@ -26,18 +26,28 @@ def lambda_handler(event, context):
     path = event['path']
     headers = event['multiValueHeaders']
     
+    logger.info(f'Received request for path: {path}')
+    
     if 'x-amzn-oidc-data' in headers:
         encoded_jwt = headers['x-amzn-oidc-data'][0]
         token_payload = decode_jwt(encoded_jwt)
     else:
         # There is no session, close
+        logger.info('No OIDC data in headers, closing session')
         return close(headers)
     
-    if path == '/aws_mwaa/aws-console-sso':
+    # Airflow 3.x redirects to /auth/login/ - redirect to our SSO endpoint
+    if path.startswith('/auth/login'):
+        logger.info('Airflow 3.x /auth/login detected, redirecting to /aws_mwaa/aws-console-sso')
+        redirect = login(headers, token_payload)
+    elif path == '/aws_mwaa/aws-console-sso':
+        logger.info('Processing /aws_mwaa/aws-console-sso request')
         redirect = login(headers, token_payload)
     elif path == '/logout/':
+        logger.info('Processing logout request')
         redirect = logout(headers, 'Logged out successfully')
     else:
+        logger.info(f'Unknown path: {path}, logging out')
         redirect = logout(headers, '')
     
     logger.info(json.dumps(redirect))
@@ -131,26 +141,22 @@ def login(headers, jwt_payload):
                 standard_roles = ['Admin', 'Op', 'User', 'Viewer']
                 
                 if mwaa_role not in standard_roles:
-                    # Check if user already has the correct role
-                    has_correct_role = check_user_role(mwaa, airflow_username, mwaa_role)
+                    # Trigger DAG and wait for completion
+                    # Note: Airflow 3.x doesn't have /users endpoint, so we can't check existing roles
+                    # The DAG will handle creating/updating the user as needed
+                    logger.info(f'Triggering update_user_role DAG for user: {airflow_username} with role: {mwaa_role}')
+                    dag_success = trigger_and_wait_for_dag(
+                        mwaa=mwaa,
+                        username=airflow_username,
+                        role=mwaa_role
+                    )
                     
-                    if has_correct_role:
-                        logger.info(f'User {airflow_username} already has the correct role {mwaa_role}, skipping DAG trigger')
-                    else:
-                        # Trigger DAG and wait for completion
-                        logger.info(f'Triggering update_user_role DAG for user: {airflow_username} with role: {mwaa_role}')
-                        dag_success = trigger_and_wait_for_dag(
-                            mwaa=mwaa,
-                            username=airflow_username,
-                            role=mwaa_role
-                        )
-                        
-                        if not dag_success:
-                            logger.error('DAG did not complete successfully')
-                            redirect = logout(headers, 'Failed to configure user access. Please try again or contact your administrator.')
-                            return redirect
-                        
-                        logger.info('✓ DAG completed successfully, user has been created/updated with correct role')
+                    if not dag_success:
+                        logger.error('DAG did not complete successfully')
+                        redirect = logout(headers, 'Failed to configure user access. Please try again or contact your administrator.')
+                        return redirect
+                    
+                    logger.info('✓ DAG completed successfully, user has been created/updated with correct role')
                 else:
                     logger.info(f'User has standard role "{mwaa_role}", skipping DAG trigger')
                 
@@ -248,65 +254,6 @@ def get_mwaa_client(role_arn, user_name):
     return mwaa
 
 
-def check_user_role(mwaa, username, expected_role):
-    """
-    Check if user already has the expected role and ONLY that role.
-    
-    Args:
-        mwaa: MWAA client
-        username: Username to check
-        expected_role: Expected MWAA role
-    
-    Returns:
-        bool: True if user has ONLY the expected role, False otherwise
-    """
-    try:
-        logger.info(f'Checking if user {username} already has role {expected_role}')
-        
-        # Get list of users via REST API
-        response = mwaa.invoke_rest_api(
-            Name=Amazon_MWAA_ENV_NAME,
-            Path='/users',
-            Method='GET'
-        )
-        
-        if response.get('RestApiStatusCode') != 200:
-            logger.warning(f'Failed to get users list. Status: {response.get("RestApiStatusCode")}')
-            return False
-        
-        users_data = response.get('RestApiResponse', {})
-        users = users_data.get('users', [])
-        
-        # Find the user
-        for user in users:
-            if user.get('username') == username:
-                roles = user.get('roles', [])
-                role_names = [role.get('name') for role in roles]
-                
-                logger.info(f'User {username} current roles: {role_names}')
-                
-                # Check if user has ONLY the expected role
-                # User should have exactly one role: the expected role
-                if len(role_names) == 1 and expected_role in role_names:
-                    logger.info(f'✓ User already has ONLY the {expected_role} role, skipping DAG')
-                    return True
-                elif expected_role in role_names and len(role_names) > 1:
-                    logger.info(f'User needs role update from {role_names} to [{expected_role}]')
-                    return False
-                else:
-                    logger.info(f'User does not have {expected_role} role, needs update')
-                    return False
-        
-        # User not found
-        logger.info(f'User {username} not found, needs to be created')
-        return False
-        
-    except Exception as e:
-        logger.error(f'Error checking user role: {e}')
-        # If we can't check, assume we need to run the DAG
-        return False
-
-
 def trigger_and_wait_for_dag(mwaa, username, role, max_wait_seconds=60):
     """
     Triggers the update_user_role DAG using MWAA REST API and waits for completion.
@@ -324,19 +271,25 @@ def trigger_and_wait_for_dag(mwaa, username, role, max_wait_seconds=60):
     
     try:
         # Trigger the DAG using REST API
-        # Path should NOT include /api/v1 - MWAA adds this automatically
         logger.info(f'Triggering DAG via REST API for user: {username} with role: {role}')
+        
+        # Prepare the request body for Airflow 3.x
+        from datetime import datetime, timezone
+        request_body = {
+            'conf': {
+                'username': username,
+                'role': role
+            },
+            'logical_date': datetime.now(timezone.utc).isoformat()
+        }
+        
+        logger.info(f'Request body: {request_body}')
         
         trigger_response = mwaa.invoke_rest_api(
             Name=Amazon_MWAA_ENV_NAME,
             Path='/dags/update_user_role/dagRuns',
             Method='POST',
-            Body={
-                'conf': {
-                    'username': username,
-                    'role': role
-                }
-            }
+            Body=request_body
         )
         
         logger.info(f'Trigger response status: {trigger_response.get("RestApiStatusCode")}')
@@ -401,6 +354,10 @@ def trigger_and_wait_for_dag(mwaa, username, role, max_wait_seconds=60):
             
     except Exception as e:
         logger.error(f'Error triggering or waiting for DAG: {e}')
+        logger.error(f'Error type: {type(e).__name__}')
+        logger.error(f'Error args: {e.args}')
+        if hasattr(e, 'response'):
+            logger.error(f'Error response: {e.response}')
         import traceback
         logger.error(f'Traceback: {traceback.format_exc()}')
         return False

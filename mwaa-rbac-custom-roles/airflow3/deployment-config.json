@@ -25,7 +25,7 @@
   },
   {
     "ParameterKey": "MWAAEnvironmentName",
-    "ParameterValue": "mwaa-af3-1"
+    "ParameterValue": "mwaa-af3-2"
   },
   {
     "ParameterKey": "ALBCertificateArn",

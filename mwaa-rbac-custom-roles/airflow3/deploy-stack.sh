@@ -26,6 +26,7 @@ RUN_VPC=false
 RUN_UPLOAD=false
 RUN_ALB=false
 RUN_LAMBDA_UPDATE=false
+RUN_LAMBDA_CODE_UPDATE=false
 RUN_ALL=true
 
 # Stack names (defaults)
@@ -55,6 +56,11 @@ while [[ $# -gt 0 ]]; do
             RUN_ALL=false
             shift
             ;;
+        --update-lambda-code)
+            RUN_LAMBDA_CODE_UPDATE=true
+            RUN_ALL=false
+            shift
+            ;;
         --vpc-stack)
             VPC_STACK_NAME="$2"
             shift 2
@@ -73,6 +79,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./deploy-stack.sh --upload                           # Upload files to S3 only"
             echo "  ./deploy-stack.sh --alb                              # Deploy ALB stack only"
             echo "  ./deploy-stack.sh --update-lambda                    # Update Lambda environment variables only"
+            echo "  ./deploy-stack.sh --update-lambda-code               # Update Lambda function code only"
             echo "  ./deploy-stack.sh --vpc --upload                     # Deploy VPC and upload files"
             echo "  ./deploy-stack.sh --help                             # Show this help message"
             echo ""
@@ -85,6 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --upload   Upload Lambda code and DAG files to S3"
             echo "  --alb      Deploy ALB and authentication stack"
             echo "  --update-lambda  Update Lambda environment variables only"
+            echo "  --update-lambda-code  Update Lambda function code only"
             echo ""
             echo "Examples:"
             echo "  # Full deployment with default stack names"
@@ -289,9 +297,27 @@ upload_files_to_s3() {
     aws s3 cp lambda_auth/lambda_mwaa-authorizer.py "s3://$bucket_name/lambda-code/lambda_mwaa-authorizer.py" \
         --content-type "text/x-python"
     
-    # Upload create_role_glue_job_dag.py (too large for CloudFormation inline)
-    print_status "Uploading create_role_glue_job_dag.py..."
-    aws s3 cp role_creation_dag/create_role_glue_job_dag.py "s3://$bucket_name/dags/create_role_glue_job_dag.py" \
+    # Upload DAG files
+    print_status "Uploading DAG files..."
+    
+    # Upload create_role_glue_job_dag.py with stack name replacement
+    print_status "  - create_role_glue_job_dag.py (replacing {{VPC_STACK_NAME}} with $VPC_STACK_NAME)..."
+    sed "s/{{VPC_STACK_NAME}}/$VPC_STACK_NAME/g" role_creation_dag/create_role_glue_job_dag.py | \
+        aws s3 cp - "s3://$bucket_name/dags/create_role_glue_job_dag.py" \
+        --content-type "text/x-python"
+    
+    # Upload update_user_role_dag.py
+    print_status "  - update_user_role_dag.py..."
+    aws s3 cp role_creation_dag/update_user_role_dag.py "s3://$bucket_name/dags/update_user_role_dag.py" \
+        --content-type "text/x-python"
+    
+    # Upload sample DAGs
+    print_status "  - hello_world_simple.py..."
+    aws s3 cp sample_dags/hello_world_simple.py "s3://$bucket_name/dags/hello_world_simple.py" \
+        --content-type "text/x-python"
+    
+    print_status "  - hello_world_advanced.py..."
+    aws s3 cp sample_dags/hello_world_advanced.py "s3://$bucket_name/dags/hello_world_advanced.py" \
         --content-type "text/x-python"
     
     print_success "Files uploaded successfully"
@@ -480,6 +506,103 @@ EOF
     fi
 }
 
+# Function to update Lambda function code
+update_lambda_code() {
+    print_status "Updating Lambda function code..."
+    
+    # Get Lambda function name from ALB stack
+    local lambda_name=$(aws cloudformation describe-stacks \
+        --stack-name "$ALB_STACK_NAME" \
+        --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+        --output text 2>/dev/null)
+    
+    if [[ -z "$lambda_name" || "$lambda_name" == "None" ]]; then
+        print_error "Could not retrieve Lambda function name from ALB stack"
+        return 1
+    fi
+    
+    print_status "Lambda Function: $lambda_name"
+    
+    # Create temporary directory for packaging
+    local temp_dir=$(mktemp -d)
+    local package_dir="$temp_dir/package"
+    mkdir -p "$package_dir"
+    
+    print_status "Installing dependencies..."
+    
+    # Install dependencies to package directory
+    python3 -m pip install --target "$package_dir" python-jose requests --quiet
+    
+    if [[ $? -ne 0 ]]; then
+        print_error "Failed to install Lambda dependencies"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    print_status "Creating deployment package..."
+    
+    # Copy Lambda function code
+    cp lambda_auth/lambda_mwaa-authorizer.py "$package_dir/mwaa_authx_lambda_function.py"
+    
+    # Create zip file
+    local zip_file="$temp_dir/lambda_function.zip"
+    (cd "$package_dir" && zip -r "$zip_file" . -q)
+    
+    if [[ $? -ne 0 ]]; then
+        print_error "Failed to create deployment package"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    print_status "Uploading Lambda function code..."
+    
+    # Update Lambda function code
+    aws lambda update-function-code \
+        --function-name "$lambda_name" \
+        --zip-file "fileb://$zip_file" \
+        --output json > /dev/null
+    
+    if [[ $? -eq 0 ]]; then
+        print_success "Lambda function code updated successfully"
+        
+        # Wait for Lambda to finish updating
+        print_status "Waiting for Lambda function to be ready..."
+        local count=0
+        local max_attempts=30
+        
+        while [[ $count -lt $max_attempts ]]; do
+            local state=$(aws lambda get-function \
+                --function-name "$lambda_name" \
+                --query 'Configuration.State' \
+                --output text 2>/dev/null)
+            
+            if [[ "$state" == "Active" ]]; then
+                print_success "Lambda function is ready"
+                break
+            elif [[ "$state" == "Failed" ]]; then
+                print_error "Lambda function update failed"
+                rm -rf "$temp_dir"
+                return 1
+            fi
+            
+            echo -n "."
+            sleep 2
+            ((count++))
+        done
+        
+        if [[ $count -ge $max_attempts ]]; then
+            print_warning "Timeout waiting for Lambda to be ready, but update was successful"
+        fi
+    else
+        print_error "Failed to update Lambda function code"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Clean up
+    rm -rf "$temp_dir"
+}
+
 # Function to display deployment summary
 display_summary() {
     print_success "Deployment completed successfully!"
@@ -554,6 +677,7 @@ main() {
         [[ "$RUN_UPLOAD" == true ]] && echo "  ✓ File upload"
         [[ "$RUN_ALB" == true ]] && echo "  ✓ ALB deployment"
         [[ "$RUN_LAMBDA_UPDATE" == true ]] && echo "  ✓ Lambda environment update"
+        [[ "$RUN_LAMBDA_CODE_UPDATE" == true ]] && echo "  ✓ Lambda code update"
     fi
     echo
     
@@ -594,6 +718,11 @@ main() {
     # Update Lambda environment variables only
     if [[ "$RUN_LAMBDA_UPDATE" == true ]]; then
         update_lambda_environment
+    fi
+    
+    # Update Lambda function code only
+    if [[ "$RUN_LAMBDA_CODE_UPDATE" == true ]]; then
+        update_lambda_code
     fi
     
     # Display summary only if all steps were run

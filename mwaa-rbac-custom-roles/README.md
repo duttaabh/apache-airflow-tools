@@ -44,15 +44,37 @@ mwaa-rbac-custom-roles/
 │
 ├── airflow3/              # Airflow 3.x compatible implementation
 │   ├── 01-vpc-mwaa.yml    # VPC and MWAA environment
-│   ├── 02-alb.yml         # ALB and authentication
-│   ├── deploy-stack.sh    # Deployment script
+│   ├── 02-alb.yml         # ALB and authentication (updated for AF3 auth)
+│   ├── deploy-stack.sh    # Deployment script (updated with DAG upload)
 │   ├── cleanup-stack.sh   # Cleanup script
-│   ├── lambda_auth/       # Lambda authorizer code
+│   ├── lambda_auth/       # Lambda authorizer code (updated for AF3 endpoints)
 │   ├── role_creation_dag/ # DAGs for role management (updated for AF3)
-│   └── sample_dags/       # Example DAGs
+│   ├── sample_dags/       # Example DAGs (updated for AF3)
+│   ├── AIRFLOW3_AUTH_FIX.md  # Detailed AF3 authentication guide
+│   └── README.md          # Airflow 3.x specific documentation
 │
 └── README.md              # This file
 ```
+
+## Airflow Version Compatibility
+
+### Airflow 2.x (airflow2/)
+- Tested with Airflow 2.5.x, 2.6.x, 2.7.x, 2.8.x, 2.9.x, 2.10.x
+- Uses standard authentication endpoints
+- Compatible with `schedule_interval` and `DummyOperator`
+
+### Airflow 3.x (airflow3/)
+- Tested with Airflow 3.0.x
+- **Updated authentication**: New `/auth/login/` endpoint and `/pluginsv2/*` paths
+- **Updated DAG syntax**: Uses `schedule` instead of `schedule_interval`
+- **Updated operators**: Uses `EmptyOperator` instead of `DummyOperator`
+- **Removed parameters**: `provide_context=True` no longer needed
+- **Database access**: Uses direct PostgreSQL via `psycopg2` (bypasses `airflow-db-not-allowed` restriction)
+- **REST API changes**: Requires `logical_date` field when triggering DAGs, `/users` endpoint removed
+- **Role management**: Ensures users have exactly ONE role, removes all existing roles before assignment
+- **Custom role creation**: Preserves `menu access on DAGs` permission for UI visibility
+- See `airflow3/AIRFLOW3_AUTH_FIX.md` for detailed authentication changes
+- See `airflow3/README.md` for complete migration guide and troubleshooting
 
 ## Prerequisites
 
@@ -155,15 +177,42 @@ https://<alb-dns>/aws_mwaa/aws-console-sso
 
 | Feature | Airflow 2.x | Airflow 3.x |
 |---------|-------------|-------------|
-| DB Connection Env Var | `AIRFLOW__CORE__SQL_ALCHEMY_CONN` | `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` |
-| MWAA DB Access | Direct SQL Alchemy | May use `DB_SECRETS` env var |
-| DAG Definition | Context manager or `@dag` | Prefer `@dag` decorator |
-| Schedule Parameter | `schedule_interval` | `schedule` |
-| Dummy Operator | `DummyOperator` | `EmptyOperator` |
+| **Authentication Endpoints** | `/login/` | `/auth/login/` |
+| **Plugin Paths** | `/aws_mwaa/aws-console-sso` | `/pluginsv2/aws_mwaa/aws-console-sso` (new) |
+| **DB Connection Env Var** | `AIRFLOW__CORE__SQL_ALCHEMY_CONN` | `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` |
+| **MWAA DB Access** | Direct SQL Alchemy | Blocked (`airflow-db-not-allowed`), use `DB_SECRETS` |
+| **Database Access Method** | Airflow CLI (`airflow users`) | Direct PostgreSQL via `psycopg2` |
+| **REST API - Trigger DAG** | No `logical_date` required | Requires `logical_date` field |
+| **REST API - Users Endpoint** | `/users` available | `/users` removed (404) |
+| **Schedule Parameter** | `schedule_interval` | `schedule` (required) |
+| **Dummy Operator** | `DummyOperator` | `EmptyOperator` (required) |
+| **PythonOperator Context** | `provide_context=True` | Always provided (parameter removed) |
+| **DAG Definition** | Context manager or `@dag` | Prefer `@dag` decorator |
+
+### Migration Checklist
+
+When migrating from Airflow 2.x to 3.x:
+
+- [ ] Update ALB configuration to handle new authentication endpoints
+- [ ] Update Lambda authorizer to include `logical_date` when triggering DAGs
+- [ ] Update Lambda authorizer to remove `/users` endpoint dependency
+- [ ] Replace `schedule_interval` with `schedule` in all DAGs
+- [ ] Remove `provide_context=True` from all PythonOperator instances
+- [ ] Replace `DummyOperator` with `EmptyOperator`
+- [ ] Update `update_user_role_dag.py` to use direct PostgreSQL access via `psycopg2`
+- [ ] Update `create_role_glue_job_dag.py` to preserve `menu access on DAGs` permission
+- [ ] Remove `access_control` references to non-existent roles
+- [ ] Test authentication flow through ALB
+- [ ] Verify role creation DAG works correctly
+- [ ] Test that custom role users can see DAGs page
+- [ ] Verify users have only ONE role (no Public role)
+- [ ] Test all custom DAGs in development environment
+
+See `airflow3/README.md` and `airflow3/AIRFLOW3_AUTH_FIX.md` for detailed migration instructions.
 
 ### Backward Compatibility
 
-The Airflow 3.x implementation is backward compatible with Airflow 2.x. The `create_role_glue_job_dag.py` automatically detects the Airflow version and uses appropriate connection methods.
+The Airflow 3.x implementation is backward compatible with Airflow 2.x for database connections. The `create_role_glue_job_dag.py` automatically detects the Airflow version and uses appropriate connection methods.
 
 ## Role Mapping
 
@@ -228,12 +277,61 @@ To remove all resources:
 2. Verify Glue connection to MWAA database
 3. Ensure source role exists
 4. Check GlueRoleCreatorRole permissions
+5. Verify target role doesn't already exist (delete it first)
+
+### Custom Role Users Can't See DAGs (Airflow 3.x)
+
+**Error:** User has custom role but DAGs page is empty
+
+**Root Cause:** Role missing `menu access on DAGs` permission
+
+**Solution:**
+1. Delete the custom role in Airflow UI (Security → List Roles)
+2. Ensure you have the latest `create_role_glue_job_dag.py` (preserves DAG menu access)
+3. Re-run the `create_role_glue_job` DAG
+4. Verify role has `menu access on DAGs` permission
+
+### Users Have Multiple Roles (Airflow 3.x)
+
+**Error:** User has both Public and custom roles
+
+**Root Cause:** `update_user_role` DAG not removing all existing roles
+
+**Solution:**
+1. Ensure you have the latest `update_user_role_dag.py` (removes ALL roles before assignment)
+2. Manually remove extra roles from user (Security → List Users → Edit)
+3. Or trigger `update_user_role` DAG manually with user's username
 
 ### Connection Issues (Airflow 3.x)
 
-**Error:** `Neither SQL_ALCHEMY_CONN nor MWAA database environment variables are available`
+**Error:** `sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL from string 'airflow-db-not-allowed:///'`
 
-**Solution:** The DAG automatically handles both Airflow 2.x and 3.x connection methods. If this error occurs, check MWAA environment configuration.
+**Root Cause:** Airflow 3.x blocks direct SQL Alchemy access
+
+**Solution:** This is expected. The DAG should automatically use `DB_SECRETS` environment variable. Verify:
+1. DAG code has fallback logic for `DB_SECRETS`
+2. Environment variables exist: `DB_SECRETS`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`
+3. Re-upload the updated `update_user_role_dag.py`
+
+### REST API Errors (Airflow 3.x)
+
+**Error:** 422 error when triggering DAG
+
+**Root Cause:** Missing `logical_date` field (required in Airflow 3.x)
+
+**Solution:** Update Lambda code to include `logical_date`:
+```python
+request_body = {
+    'conf': {'username': username, 'role': role},
+    'logical_date': datetime.now(timezone.utc).isoformat()
+}
+```
+
+**Error:** 404 error on `/users` endpoint
+
+**Root Cause:** Endpoint removed in Airflow 3.x
+
+**Solution:** Remove any code that calls `/users` endpoint. Lambda should not check user roles before triggering DAG.
 
 ### Lambda JSON Parsing Error
 
