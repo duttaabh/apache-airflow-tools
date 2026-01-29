@@ -16,8 +16,6 @@ The ALB listener rules have been updated to handle Airflow 3.x authentication pa
 - **ListenerRule5 (Priority 5)**: Intercepts `/auth/login/` and forwards to Lambda
 - Default action: Forwards all unmatched paths (including `/pluginsv2/*`) to MWAA target group
 
-See `AIRFLOW3_AUTH_FIX.md` for detailed information about the authentication flow.
-
 ### 2. DAG Definition
 
 **Airflow 3.x Changes:**
@@ -196,9 +194,6 @@ cursor.execute(
 
 ### Lambda Function
 - `lambda_auth/lambda_mwaa-authorizer.py` - **Updated for Airflow 3.x** authentication endpoints
-
-### Documentation
-- `AIRFLOW3_AUTH_FIX.md` - **Detailed guide** on Airflow 3.x authentication changes and ALB configuration
 
 ### Scripts
 - `deploy-stack.sh` - **Updated** deployment script with DAG file upload support

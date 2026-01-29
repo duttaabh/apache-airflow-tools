@@ -50,7 +50,6 @@ mwaa-rbac-custom-roles/
 │   ├── lambda_auth/       # Lambda authorizer code (updated for AF3 endpoints)
 │   ├── role_creation_dag/ # DAGs for role management (updated for AF3)
 │   ├── sample_dags/       # Example DAGs (updated for AF3)
-│   ├── AIRFLOW3_AUTH_FIX.md  # Detailed AF3 authentication guide
 │   └── README.md          # Airflow 3.x specific documentation
 │
 └── README.md              # This file
@@ -73,7 +72,6 @@ mwaa-rbac-custom-roles/
 - **REST API changes**: Requires `logical_date` field when triggering DAGs, `/users` endpoint removed
 - **Role management**: Ensures users have exactly ONE role, removes all existing roles before assignment
 - **Custom role creation**: Preserves `menu access on DAGs` permission for UI visibility
-- See `airflow3/AIRFLOW3_AUTH_FIX.md` for detailed authentication changes
 - See `airflow3/README.md` for complete migration guide and troubleshooting
 
 ## Prerequisites
@@ -208,7 +206,7 @@ When migrating from Airflow 2.x to 3.x:
 - [ ] Verify users have only ONE role (no Public role)
 - [ ] Test all custom DAGs in development environment
 
-See `airflow3/README.md` and `airflow3/AIRFLOW3_AUTH_FIX.md` for detailed migration instructions.
+See `airflow3/README.md` for detailed migration instructions.
 
 ### Backward Compatibility
 
