@@ -348,12 +348,20 @@ If you need to rebuild the layer manually:
 ```bash
 cd airflow2/lambda_auth  # or airflow3/lambda_auth
 
-# Build layer using Docker
+# Option 1: Build layer using Docker (recommended - includes all dependencies)
+# The Dockerfile installs: pip install psycopg2-binary==2.9.9 python-jose requests
 docker build --platform linux/amd64 -t psycopg2-layer .
 docker create --name psycopg2-container psycopg2-layer
 docker cp psycopg2-container:/layer/. ./lambda-layer/
 docker rm psycopg2-container
 docker rmi psycopg2-layer
+
+# Option 2: Manual build without Docker (if Docker is not available)
+# Create layer directory structure
+mkdir -p lambda-layer/python
+
+# Install all dependencies manually
+pip install psycopg2-binary==2.9.9 python-jose requests -t ./lambda-layer/python/
 
 # Create zip
 cd lambda-layer && zip -r ../psycopg2-layer.zip . -q && cd ..
@@ -364,7 +372,7 @@ aws s3 cp psycopg2-layer.zip s3://YOUR-BUCKET/lambda-layers/
 # Publish layer
 aws lambda publish-layer-version \
     --layer-name mwaa-psycopg2 \
-    --description 'PostgreSQL adapter for MWAA authorizer' \
+    --description 'All dependencies for MWAA authorizer (psycopg2, python-jose, requests)' \
     --content S3Bucket=YOUR-BUCKET,S3Key=lambda-layers/psycopg2-layer.zip \
     --compatible-runtimes python3.11 python3.12
 
@@ -374,14 +382,27 @@ aws lambda update-function-configuration \
     --layers arn:aws:lambda:REGION:ACCOUNT:layer:mwaa-psycopg2:VERSION
 ```
 
+**Note:** 
+- **Option 1 (Docker)** is recommended as it ensures psycopg2 is compiled for the correct Lambda runtime (Amazon Linux 2)
+- **Option 2 (Manual)** may work but psycopg2-binary might not be compatible with Lambda if built on a different platform
+- The layer must include all three dependencies: `psycopg2-binary`, `python-jose`, and `requests`
+- The Lambda function code contains only the application logic with no external dependencies
+
 ### Layer Structure
 
 ```
 psycopg2-layer.zip
 └── python/
-    └── psycopg2/
+    ├── psycopg2/
+    │   ├── __init__.py
+    │   ├── _psycopg.cpython-311-x86_64-linux-gnu.so  # C extension
+    │   └── ... (other files)
+    ├── jose/
+    │   ├── __init__.py
+    │   ├── jwt.py
+    │   └── ... (other files)
+    └── requests/
         ├── __init__.py
-        ├── _psycopg.cpython-311-x86_64-linux-gnu.so  # C extension
         └── ... (other files)
 ```
 
