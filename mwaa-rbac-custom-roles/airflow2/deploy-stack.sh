@@ -1086,40 +1086,11 @@ update_lambda_code() {
     if command -v docker &> /dev/null; then
         print_status "Using Docker to build dependencies for Lambda runtime..."
         
-        # Create a Dockerfile for building dependencies (without psycopg2-binary)
-        cat > "$temp_dir/Dockerfile" << 'EOF'
-FROM public.ecr.aws/lambda/python:3.11
-
-# Install dependencies (psycopg2-binary comes from Lambda layer)
-RUN pip install --target /package python-jose requests
-EOF
-        
-        # Build the Docker image and extract the package
-        docker build -t lambda-deps "$temp_dir" > /dev/null 2>&1
-        
-        if [[ $? -eq 0 ]]; then
-            # Create a container and copy the package
-            container_id=$(docker create lambda-deps)
-            docker cp "$container_id:/package/." "$package_dir/"
-            docker rm "$container_id" > /dev/null 2>&1
-            docker rmi lambda-deps > /dev/null 2>&1
-            
-            print_success "Dependencies built successfully using Docker"
-        else
-            print_warning "Docker build failed, falling back to local pip install"
-            python3 -m pip install --target "$package_dir" python-jose requests --quiet
-        fi
+        # No dependencies needed - all come from Lambda layer
+        # Just create an empty package directory
+        print_status "All dependencies provided by Lambda layer - no build needed"
     else
-        print_warning "Docker not available, using local pip install"
-        
-        # Install dependencies to package directory (without psycopg2-binary)
-        python3 -m pip install --target "$package_dir" python-jose requests --quiet
-    fi
-    
-    if [[ $? -ne 0 ]]; then
-        print_error "Failed to install Lambda dependencies"
-        rm -rf "$temp_dir"
-        return 1
+        print_status "All dependencies provided by Lambda layer - no build needed"
     fi
     
     print_status "Creating deployment package..."

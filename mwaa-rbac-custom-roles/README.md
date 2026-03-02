@@ -299,17 +299,17 @@ cd ../..
 | **Dummy Operator** | `DummyOperator` | `EmptyOperator` (required) |
 | **PythonOperator Context** | `provide_context=True` | Always provided (parameter removed) |
 
-## Lambda Layer (psycopg2)
+## Lambda Layer (All Dependencies)
 
-The solution uses a Lambda layer for the psycopg2 PostgreSQL driver to enable direct database access.
+The solution uses a Lambda layer for all Python dependencies: psycopg2 (PostgreSQL driver), python-jose (JWT library), and requests (HTTP library).
 
 ### Why a Lambda Layer?
 
-psycopg2 requires compiled C extensions that must match the Lambda runtime environment (Amazon Linux 2). Building it in a Docker container ensures compatibility and resolves the common `No module named 'psycopg2._psycopg'` error.
+psycopg2 requires compiled C extensions that must match the Lambda runtime environment (Amazon Linux 2). Building it in a Docker container ensures compatibility and resolves the common `No module named 'psycopg2._psycopg'` error. By including all dependencies in the layer, the Lambda function code is minimal and deployment is faster.
 
 ### Dockerfile Configuration
 
-The Dockerfile includes system dependencies for proper compilation:
+The Dockerfile includes all Lambda dependencies:
 
 ```dockerfile
 FROM --platform=linux/amd64 public.ecr.aws/lambda/python:3.11
@@ -317,9 +317,9 @@ FROM --platform=linux/amd64 public.ecr.aws/lambda/python:3.11
 # Install system dependencies for psycopg2
 RUN yum install -y postgresql-devel gcc python3-devel
 
-# Install psycopg2-binary for x86_64
+# Install all Lambda dependencies: psycopg2-binary, python-jose, and requests
 RUN pip install --upgrade pip && \
-    pip install psycopg2-binary==2.9.9 -t /python --no-cache-dir
+    pip install psycopg2-binary==2.9.9 python-jose requests -t /python --no-cache-dir
 
 # Create the layer structure
 RUN mkdir -p /layer/python && cp -r /python/* /layer/python/
@@ -330,7 +330,7 @@ RUN mkdir -p /layer/python && cp -r /python/* /layer/python/
 The `deploy-stack.sh` script automatically:
 1. Checks for Docker availability
 2. Builds Docker image with Lambda runtime and system dependencies
-3. Installs psycopg2-binary with proper C extension compilation
+3. Installs all dependencies (psycopg2-binary, python-jose, requests) with proper C extension compilation
 4. Extracts layer and creates zip file
 5. Uploads to S3 bucket
 6. Publishes Lambda layer with version tracking

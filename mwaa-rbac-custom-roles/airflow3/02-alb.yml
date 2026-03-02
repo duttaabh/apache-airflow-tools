@@ -9,9 +9,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 #   ./deploy.sh
 # 
 # The deploy.sh script will:
-# - Install python-jose and requests dependencies (cross-platform compatible)
 # - Package the lambda_mwaa-authorizer.py function code (source: lambda_auth/)
 # - Update the Lambda function with the correct code
+# - All dependencies (psycopg2, python-jose, requests) come from Lambda layer
 # - Configure environment variables
 # - Upload create_role_glue_job_dag.py to S3 (too large for CloudFormation inline)
 #
@@ -25,7 +25,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 # Source location: role_creation_dag/create_role_glue_job_dag.py
 #
 # Key changes from original implementation:
-# - Uses python-jose instead of PyJWT+cryptography (no binary dependencies)
+# - All dependencies (psycopg2, python-jose, requests) in Lambda layer
 # - Adds mwaa-role to GROUP_TO_ROLE_MAP for dynamic role assignment
 # - Supports custom "Restricted" role (must be created manually in MWAA UI)
 # - Lambda timeout increased to 90 seconds to wait for DAG completion
@@ -144,7 +144,7 @@ Resources:
         ZipFile: |
           # Placeholder - Deploy actual code using deploy-stack.sh script
           # The Lambda function code is in lambda_auth/lambda_mwaa-authorizer.py
-          # Dependencies: python-jose, requests
+          # Dependencies: All dependencies come from Lambda layer
           import json
           def lambda_handler(event, context):
               return {
@@ -566,21 +566,28 @@ Resources:
                               })
                               return
                           
-                          # Install dependencies directly to tmpdir (not in python/ subdirectory)
-                          print("Installing dependencies...")
+                          # Download mwaa_database_manager.py dependency
+                          db_manager_file = os.path.join(tmpdir, 'mwaa_database_manager.py')
+                          try:
+                              s3_client.download_file(bucket_name, 'lambda-code/mwaa_database_manager.py', db_manager_file)
+                              print(f"✓ Downloaded mwaa_database_manager.py from S3")
+                          except Exception as e:
+                              print(f"✗ Failed to download mwaa_database_manager.py: {e}")
+                              print(f"Please upload lambda_auth/mwaa_database_manager.py to s3://{bucket_name}/lambda-code/mwaa_database_manager.py")
+                              # Don't fail - just skip deployment
+                              cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                  'Message': 'mwaa_database_manager.py not found in S3 - run deploy.sh to deploy'
+                              })
+                              return
                           
-                          subprocess.check_call([
-                              'pip', 'install',
-                              'python-jose', 'requests',
-                              '-t', tmpdir,
-                              '--quiet', '--no-cache-dir'
-                          ])
+                          # No dependencies to install - all come from Lambda layer
+                          print("All dependencies provided by Lambda layer")
                           
                           # Create deployment package
                           print("Creating deployment package...")
                           zip_buffer = io.BytesIO()
                           with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                              # Add all files from tmpdir (Lambda code + dependencies)
+                              # Add all files from tmpdir (Lambda code only, no dependencies)
                               for root, dirs, files in os.walk(tmpdir):
                                   for file in files:
                                       file_path = os.path.join(root, file)
@@ -725,7 +732,7 @@ Resources:
       Conditions:
         - Field: path-pattern
           Values:
-            - /aws_mwaa/aws-console-sso
+            - /auth/login/*
       ListenerArn: !Ref ALBListener
       Priority: 2
 
@@ -791,7 +798,7 @@ Resources:
       Conditions:
         - Field: path-pattern
           Values:
-            - /auth/login/*
+            - /aws_mwaa/aws-console-sso
       ListenerArn: !Ref ALBListener
       Priority: 5
 

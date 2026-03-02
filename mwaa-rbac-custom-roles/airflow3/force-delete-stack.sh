@@ -4,10 +4,17 @@
 # MWAA Stack Force Deletion Script
 #
 # This script forcefully deletes a CloudFormation stack by:
-# 1. Emptying S3 buckets
+# 1. Emptying and optionally deleting S3 buckets (in force mode)
 # 2. Deleting Lambda-created VPC endpoints
 # 3. Deleting the MWAA environment manually if needed
 # 4. Retrying stack deletion
+#
+# Usage:
+#   ./force-delete-stack.sh <stack-name> [force]
+#
+# Examples:
+#   ./force-delete-stack.sh af3x-sso-alb          # Interactive mode
+#   ./force-delete-stack.sh af3x-sso-alb true     # Force mode (no prompts)
 ################################################################################
 
 set -e
@@ -70,8 +77,8 @@ fi
 
 print_info "Current Status: $STACK_STATUS"
 
-# Step 1: Empty S3 Bucket
-print_header "Step 1: Empty S3 Bucket"
+# Step 1: Empty and Delete S3 Bucket
+print_header "Step 1: Empty and Delete S3 Bucket"
 S3_BUCKET=$(aws cloudformation describe-stack-resources --stack-name "$STACK_NAME" \
     --query 'StackResources[?ResourceType==`AWS::S3::Bucket`].PhysicalResourceId' \
     --output text 2>/dev/null || echo "")
@@ -105,6 +112,13 @@ if [ -n "$S3_BUCKET" ]; then
         fi
     else
         print_success "Bucket is already empty"
+    fi
+    
+    # Delete the bucket if in force mode
+    if [ "$FORCE_MODE" = "true" ]; then
+        print_info "Force mode: Deleting S3 bucket..."
+        aws s3api delete-bucket --bucket "$S3_BUCKET" 2>/dev/null || print_warning "Could not delete bucket (may be deleted by CloudFormation)"
+        print_success "S3 bucket deletion attempted"
     fi
 else
     print_info "No S3 bucket found"

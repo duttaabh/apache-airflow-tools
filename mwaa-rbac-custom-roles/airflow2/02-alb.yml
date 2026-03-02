@@ -14,10 +14,10 @@ AWSTemplateFormatVersion: "2010-09-09"
 # - Upload update_user_role_dag.py to S3 (source: role_creation_dag/)
 # - Upload hello_world_simple.py to S3 (source: sample_dags/)
 # - Upload hello_world_advanced.py to S3 (source: sample_dags/)
-# - Update Lambda function code with dependencies (python-jose, requests)
+# - Update Lambda function code (all dependencies from Lambda layer)
 #
 # Key changes from original implementation:
-# - Uses python-jose instead of PyJWT+cryptography (no binary dependencies)
+# - All dependencies (psycopg2, python-jose, requests) in Lambda layer
 # - Adds mwaa-role to GROUP_TO_ROLE_MAP for dynamic role assignment
 # - Supports custom "Restricted" role (must be created manually in MWAA UI)
 # - Lambda timeout increased to 90 seconds to wait for DAG completion
@@ -146,7 +146,7 @@ Resources:
         ZipFile: |
           # Placeholder - Deploy actual code using deploy-stack.sh script
           # The Lambda function code is in lambda_auth/lambda_mwaa-authorizer.py
-          # Dependencies: python-jose, requests
+          # Dependencies: All dependencies come from Lambda layer
           import json
           def lambda_handler(event, context):
               return {
@@ -528,7 +528,7 @@ Resources:
                           
                           subprocess.check_call([
                               'pip', 'install',
-                              'python-jose', 'requests',
+                              'requests',
                               '-t', tmpdir,
                               '--quiet', '--no-cache-dir'
                           ])
