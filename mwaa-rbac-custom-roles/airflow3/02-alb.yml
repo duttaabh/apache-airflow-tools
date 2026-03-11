@@ -1,0 +1,907 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+# IMPORTANT: This CloudFormation template includes:
+# 1. Lambda function with placeholder code - MUST be updated after stack deployment
+# 2. Custom Resource that automatically deploys DAG files to S3
+#
+# After deploying this stack, you MUST deploy the actual Lambda function code using:
+#   cd mwaa-rbac-custom-roles/airflow2
+#   ./deploy.sh
+# 
+# The deploy.sh script will:
+# - Install python-jose and requests dependencies (cross-platform compatible)
+# - Package the lambda_mwaa-authorizer.py function code (source: lambda_auth/)
+# - Update the Lambda function with the correct code
+# - Configure environment variables
+# - Upload create_role_glue_job_dag.py to S3 (too large for CloudFormation inline)
+#
+# DAG files are automatically deployed by CloudFormation Custom Resource:
+# - update_user_role_dag.py - Manages user role assignments (source: role_creation_dag/)
+# - hello_world_simple.py - Simple example DAG (source: sample_dags/)
+# - hello_world_advanced.py - Advanced example with parallel tasks (source: sample_dags/)
+#
+# NOTE: create_role_glue_job_dag.py must be deployed separately via deploy-stack.sh
+# due to its size (14KB+). It creates custom MWAA roles using AWS Glue jobs.
+# Source location: role_creation_dag/create_role_glue_job_dag.py
+#
+# Key changes from original implementation:
+# - Uses python-jose instead of PyJWT+cryptography (no binary dependencies)
+# - Adds mwaa-role to GROUP_TO_ROLE_MAP for dynamic role assignment
+# - Supports custom "Restricted" role (must be created manually in MWAA UI)
+# - Lambda timeout increased to 90 seconds to wait for DAG completion
+# - Runtime updated to Python 3.11
+# - DAGs automatically deployed via CloudFormation Custom Resource
+     
+Parameters:
+
+  MWAAVPCStackName:
+    Type: String
+    Default: mwaa-vpc
+
+  ALBCertificateArn:
+    Description: The certificate arn required for Application Load Balancer
+    Type: String
+    
+  AzureAdminGroupID:
+    Description: The Group name for the Azure admins
+    Type: String
+  
+  AzureUserGroupID:
+    Description: The Group name for the Azure user
+    Type: String
+
+  AzureViewerGroupID:
+    Description: The Group name for the Azure viewer
+    Type: String
+
+  AzureCustomGroupID:
+    Description: The Group name for the Azure custom role
+    Type: String
+    Default: ""
+
+  EntraIDLoginURL:
+    Description: The Azure IDP URI
+    Type: String
+
+  AppFederationMetadataURL:
+    Type: String
+    Description: The URL of the metadata file for the SAML provider
+
+Conditions:
+  HasCustomGroup: !Not [!Equals [!Ref AzureCustomGroupID, ""]]
+
+Resources: 
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-mwaa-LambdaExecutionRole'
+      Path: /service-role/
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+
+  LambdaExecutionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-mwaa-LambdaExecutionPolicy'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: CloudWatchLogsCreateLogGroup
+          Effect: 'Allow'
+          Action:
+          - 'logs:CreateLogGroup'
+          Resource: !Join
+            - ''
+            - - 'arn:aws:logs:'
+              - !Ref AWS::Region
+              - ':'
+              - !Ref AWS::AccountId
+              - ':*'
+        - Sid: CloudWatchLogsWriteLogs
+          Effect: 'Allow'
+          Action:
+          - 'logs:CreateLogStream'
+          - 'logs:PutLogEvents'
+          Resource: !Join
+            - ''
+            - - 'arn:'
+              - !Ref AWS::Partition
+              - ':logs:'
+              - !Ref AWS::Region
+              - ':'
+              - !Ref AWS::AccountId
+              - ':log-group:/aws/lambda/'
+              - !Ref MWAALambdaFunction
+              - ':*'
+        - Sid: AssumeRoleForMWAAAccess
+          Effect: 'Allow'
+          Action: 
+            - 'sts:AssumeRole'
+            - 'sts:SetSourceIdentity'
+          Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${AWS::StackName}-*'
+        - Sid: GlueGetConnection
+          Effect: 'Allow'
+          Action:
+            - 'glue:GetConnection'
+          Resource: '*'
+      Roles:
+        - !Ref LambdaExecutionRole
+
+  MWAALambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          # Placeholder - Deploy actual code using deploy-stack.sh script
+          # The Lambda function code is in lambda_auth/lambda_mwaa-authorizer.py
+          # Dependencies: python-jose, requests
+          import json
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Please deploy using deploy.sh script')
+              }
+      Role: !GetAtt LambdaExecutionRole.Arn
+      FunctionName: !Sub '${AWS::StackName}-mwaa-lambda-function'
+      Environment:
+        Variables:
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
+          Amazon_MWAA_ENV_NAME: !ImportValue 
+                                'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+          COGNITO_CLIENT_ID: !GetAtt UserPoolClient.ClientId
+          COGNITO_DOMAIN: !ImportValue
+                  'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          GROUP_TO_ROLE_MAP: !If
+            - HasCustomGroup
+            - !Sub |
+                [{"idp-group":"${AzureAdminGroupID}","iam-role":"${MwaaAdminRole}","mwaa-role":"Admin"},
+                {"idp-group":"${AzureUserGroupID}","iam-role":"${MwaaUserRole}","mwaa-role":"User"},
+                {"idp-group":"${AzureViewerGroupID}","iam-role":"${MwaaViewerRole}","mwaa-role":"Viewer"},
+                {"idp-group":"${AzureCustomGroupID}","iam-role":"${MwaaCustomRole}","mwaa-role":"Public"}]
+            - !Sub |
+                [{"idp-group":"${AzureAdminGroupID}","iam-role":"${MwaaAdminRole}","mwaa-role":"Admin"},
+                {"idp-group":"${AzureUserGroupID}","iam-role":"${MwaaUserRole}","mwaa-role":"User"},
+                {"idp-group":"${AzureViewerGroupID}","iam-role":"${MwaaViewerRole}","mwaa-role":"Viewer"}]
+          ALB_COOKIE_NAME: AWSELBAuthSessionCookie
+          IDP_LOGIN_URI: !Ref EntraIDLoginURL
+      Handler: mwaa_authx_lambda_function.lambda_handler
+      Runtime: python3.11
+      Timeout: 90
+      VpcConfig:
+        SecurityGroupIds: 
+          - !ImportValue
+            'Fn::Sub': '${MWAAVPCStackName}-mwaa-sg'
+          - !ImportValue
+            'Fn::Sub': '${MWAAVPCStackName}-alb-sg'
+        SubnetIds: 
+          - !ImportValue
+            'Fn::Sub': '${MWAAVPCStackName}-private-subnet-3'
+
+  MwaaAdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:'
+                  - !Ref AWS::Partition
+                  - ':iam::'
+                  - !Ref AWS::AccountId
+                  - ':role/service-role/'
+                  - !Ref LambdaExecutionRole
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: airflow:CreateWebLoginToken
+                Effect: Allow
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/*/Admin'
+              - Sid: MWAAInvokeRestApi
+                Effect: Allow
+                Action:
+                  - airflow:InvokeRestApi
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Admin'
+            Version: '2012-10-17'
+          PolicyName: !Sub '${AWS::StackName}-mwaa-admin-policy'
+
+  MwaaUserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:'
+                  - !Ref AWS::Partition
+                  - ':iam::'
+                  - !Ref AWS::AccountId
+                  - ':role/service-role/'
+                  - !Ref LambdaExecutionRole
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: airflow:CreateWebLoginToken
+                Effect: Allow
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/*/User'
+              - Sid: MWAAInvokeRestApi
+                Effect: Allow
+                Action:
+                  - airflow:InvokeRestApi
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/User'
+            Version: '2012-10-17'
+          PolicyName: !Sub '${AWS::StackName}-mwaa-user-policy'  
+
+  MwaaViewerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:'
+                  - !Ref AWS::Partition
+                  - ':iam::'
+                  - !Ref AWS::AccountId
+                  - ':role/service-role/'
+                  - !Ref LambdaExecutionRole
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: airflow:CreateWebLoginToken
+                Effect: Allow
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/*/Viewer'
+              - Sid: MWAAInvokeRestApi
+                Effect: Allow
+                Action:
+                  - airflow:InvokeRestApi
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Viewer'
+            Version: '2012-10-17'
+          PolicyName: !Sub '${AWS::StackName}-mwaa-viewer-policy'
+
+  MwaaCustomRole:
+    Type: AWS::IAM::Role
+    Condition: HasCustomGroup
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:'
+                  - !Ref AWS::Partition
+                  - ':iam::'
+                  - !Ref AWS::AccountId
+                  - ':role/service-role/'
+                  - !Ref LambdaExecutionRole
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: airflow:CreateWebLoginToken
+                Effect: Allow
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/*/Public'
+              - Sid: MWAAEnvironmentAccess
+                Effect: Allow
+                Action:
+                  - airflow:GetEnvironment
+                  - airflow:CreateWebLoginToken
+                  - airflow:CreateCliToken
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:airflow:'
+                    - !Ref AWS::Region
+                    - ':'
+                    - !Ref AWS::AccountId
+                    - ':environment/'
+                    - !ImportValue
+                        'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+              - Sid: MWAAInvokeRestApi
+                Effect: Allow
+                Action:
+                  - airflow:InvokeRestApi
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Admin'
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Op'
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/User'
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Viewer'
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Public'
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/'
+                      - !ImportValue
+                          'Fn::Sub': '${MWAAVPCStackName}-MWAAEnvironmentName'
+                      - '/Restricted'
+              - Sid: MWAAPublicRoleWebLoginToken
+                Effect: Allow
+                Action:
+                  - airflow:CreateWebLoginToken
+                Resource:
+                  - !Join
+                    - ''
+                    - - 'arn:aws:airflow:'
+                      - !Ref AWS::Region
+                      - ':'
+                      - !Ref AWS::AccountId
+                      - ':role/*/Public'
+            Version: '2012-10-17'
+          PolicyName: !Sub '${AWS::StackName}-mwaa-custom-policy'
+
+  # Lambda Code Deployment Custom Resource
+  LambdaCodeDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaDeploymentAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:GetFunction
+                  - lambda:PublishLayerVersion
+                  - lambda:UpdateFunctionConfiguration
+                Resource:
+                  - !GetAtt MWAALambdaFunction.Arn
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:mwaa-authorizer-dependencies*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub 
+                    - 'arn:aws:s3:::${BucketName}/lambda-code/*'
+                    - BucketName: !ImportValue 
+                        Fn::Sub: '${MWAAVPCStackName}-MwaaS3BucketName'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 
+                    - 'arn:aws:s3:::${BucketName}'
+                    - BucketName: !ImportValue 
+                        Fn::Sub: '${MWAAVPCStackName}-MwaaS3BucketName'
+
+  LambdaCodeDeploymentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-lambda-code-deployment'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt LambdaCodeDeploymentRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          import zipfile
+          import io
+          import subprocess
+          import os
+          import tempfile
+          import base64
+          import gzip
+          
+          lambda_client = boto3.client('lambda')
+          s3_client = boto3.client('s3')
+          
+          def handler(event, context):
+              try:
+                  print(f"Event: {json.dumps(event)}")
+                  
+                  request_type = event['RequestType']
+                  function_name = event['ResourceProperties']['FunctionName']
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  code_key = event['ResourceProperties'].get('CodeKey', 'lambda-code/lambda_mwaa-authorizer.py')
+                  
+                  if request_type in ['Create', 'Update']:
+                      print(f"Deploying Lambda code to {function_name}")
+                      print(f"Downloading code from s3://{bucket_name}/{code_key}")
+                      
+                      # Create temporary directory
+                      with tempfile.TemporaryDirectory() as tmpdir:
+                          # Download Lambda code from S3
+                          lambda_file = os.path.join(tmpdir, 'mwaa_authx_lambda_function.py')
+                          try:
+                              s3_client.download_file(bucket_name, code_key, lambda_file)
+                              print(f"✓ Downloaded Lambda code from S3")
+                          except Exception as e:
+                              print(f"✗ Failed to download Lambda code: {e}")
+                              print(f"Please upload lambda_auth/lambda_mwaa-authorizer.py to s3://{bucket_name}/{code_key}")
+                              print(f"Or run: ./deploy-stack.sh --upload to deploy the Lambda code")
+                              # Don't fail - just skip deployment
+                              cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                  'Message': 'Lambda code not found in S3 - run deploy.sh to deploy'
+                              })
+                              return
+                          
+                          # Install dependencies directly to tmpdir (not in python/ subdirectory)
+                          print("Installing dependencies...")
+                          
+                          subprocess.check_call([
+                              'pip', 'install',
+                              'python-jose', 'requests',
+                              '-t', tmpdir,
+                              '--quiet', '--no-cache-dir'
+                          ])
+                          
+                          # Create deployment package
+                          print("Creating deployment package...")
+                          zip_buffer = io.BytesIO()
+                          with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                              # Add all files from tmpdir (Lambda code + dependencies)
+                              for root, dirs, files in os.walk(tmpdir):
+                                  for file in files:
+                                      file_path = os.path.join(root, file)
+                                      arcname = os.path.relpath(file_path, tmpdir)
+                                      zipf.write(file_path, arcname)
+                          
+                          # Update Lambda function
+                          print(f"Updating Lambda function {function_name}...")
+                          zip_buffer.seek(0)
+                          lambda_client.update_function_code(
+                              FunctionName=function_name,
+                              ZipFile=zip_buffer.read()
+                          )
+                          
+                          print("✓ Lambda function updated successfully")
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'Message': f'Successfully deployed Lambda code to {function_name}'
+                      })
+                  
+                  elif request_type == 'Delete':
+                      print("Delete request - no action needed")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Message': str(e)
+                  })
+
+  DeployLambdaCode:
+    Type: Custom::DeployLambdaCode
+    DependsOn: MWAALambdaFunction
+    Properties:
+      ServiceToken: !GetAtt LambdaCodeDeploymentFunction.Arn
+      FunctionName: !Ref MWAALambdaFunction
+      BucketName: !ImportValue 
+        Fn::Sub: '${MWAAVPCStackName}-MwaaS3BucketName'
+      CodeKey: 'lambda-code/lambda_mwaa-authorizer.py'
+      Version: '2'  # Increment to force update
+              
+  MWAATargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${AWS::StackName}-mwaa-tg'
+      TargetType: ip
+      Protocol: HTTPS
+      Port: 443
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTPS
+      HealthCheckTimeoutSeconds: 5 
+      HealthyThresholdCount: 2
+      IpAddressType: ipv4
+      Matcher:
+        HttpCode: 200,302
+      VpcId: !ImportValue 
+             'Fn::Sub': '${MWAAVPCStackName}-vpc'
+      Targets: 
+        - Id: '{{resolve:ssm:/mwaa/VpcEndpointIps/0}}'
+        - Id: '{{resolve:ssm:/mwaa/VpcEndpointIps/1}}'
+
+  LambdaTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: LambdaInvokePermission
+    Properties:
+      Name: !Sub '${AWS::StackName}-lambda-tg'
+      TargetType: lambda
+      TargetGroupAttributes:
+        - Key: lambda.multi_value_headers.enabled
+          Value: 'true'
+      Targets:
+        - Id: !GetAtt MWAALambdaFunction.Arn
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: authenticate-cognito
+          Order: 1
+          AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+              'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+              'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref MWAATargetGroup
+      LoadBalancerArn: !ImportValue 
+                       'Fn::Sub': '${MWAAVPCStackName}-alb'
+      Port: 443
+      Protocol: HTTPS
+      Certificates: 
+        - CertificateArn: !Ref ALBCertificateArn
+
+  ListenerRule1:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref MWAATargetGroup
+          Type: forward
+          Order: 2
+        - AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+                         'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+                            'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          Type: authenticate-cognito
+          Order: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /aws_mwaa/aws-console-sso
+        - Field: query-string
+          QueryStringConfig:
+            Values:
+              - Key: token
+                Value: true
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+
+  ListenerRule2:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref LambdaTargetGroup
+          Type: forward
+          Order: 2
+        - AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+                         'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+                            'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          Type: authenticate-cognito
+          Order: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /aws_mwaa/aws-console-sso
+      ListenerArn: !Ref ALBListener
+      Priority: 2
+
+  ListenerRule3:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref LambdaTargetGroup
+          Type: forward
+          Order: 2
+        - AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+                         'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+                            'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          Type: authenticate-cognito
+          Order: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /logout/
+      ListenerArn: !Ref ALBListener
+      Priority: 3
+
+  ListenerRule4:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref LambdaTargetGroup
+          Type: forward
+          Order: 2
+        - AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+                         'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+                            'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          Type: authenticate-cognito
+          Order: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /logout/close
+      ListenerArn: !Ref ALBListener
+      Priority: 4
+
+  ListenerRule5:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref LambdaTargetGroup
+          Type: forward
+          Order: 2
+        - AuthenticateCognitoConfig:
+            UserPoolArn: !ImportValue 
+                         'Fn::Sub': '${MWAAVPCStackName}-user-pool-arn'
+            UserPoolClientId: !GetAtt UserPoolClient.ClientId
+            UserPoolDomain: !ImportValue 
+                            'Fn::Sub': '${MWAAVPCStackName}-user-pool-domain'
+          Type: authenticate-cognito
+          Order: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /auth/login/*
+      ListenerArn: !Ref ALBListener
+      Priority: 5
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt MWAALambdaFunction.Arn
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/${AWS::StackName}-lambda-tg/*'
+
+  SAMLIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      ProviderName: !Sub ${AWS::StackName}-${AWS::AccountId}-saml
+      ProviderDetails:
+        MetadataURL: !Ref AppFederationMetadataURL
+        IDPSignout: true
+      ProviderType: SAML
+      UserPoolId: !ImportValue
+                  'Fn::Sub': '${MWAAVPCStackName}-user-pool-id'
+      AttributeMapping:
+        'custom:idp-groups' : 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups'
+        'custom:idp-name' : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-client-saml
+      GenerateSecret: true
+      UserPoolId: !ImportValue
+                  'Fn::Sub': '${MWAAVPCStackName}-user-pool-id'
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      CallbackURLs:
+        - Fn::Join:
+            - ''
+            - - 'https://'
+              - !ImportValue 
+                'Fn::Sub': '${MWAAVPCStackName}-alb-dns'
+              - '/'
+        - Fn::Join:
+            - ''
+            - - 'https://'
+              - !ImportValue 
+                'Fn::Sub': '${MWAAVPCStackName}-alb-dns'
+              - '/oauth2/idpresponse'
+      LogoutURLs:
+        - Fn::Join:
+            - ''
+            - - 'https://'
+              - !ImportValue 
+                'Fn::Sub': '${MWAAVPCStackName}-alb-dns'
+              - '/logout/close'
+      DefaultRedirectURI: 
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - !ImportValue 
+              'Fn::Sub': '${MWAAVPCStackName}-alb-dns'
+            - '/'
+      SupportedIdentityProviders:
+        - !Ref SAMLIdentityProvider
+      AllowedOAuthFlows:
+        - code     
+      AllowedOAuthScopes:
+        - openid
+      AllowedOAuthFlowsUserPoolClient: true
+      ReadAttributes:
+        - custom:idp-name
+        - custom:idp-groups
+      WriteAttributes: 
+        - custom:idp-name
+        - custom:idp-groups
+
+
+
+
+
+
+  
+
+Outputs:
+  LambdaFunctionName:
+    Description: "Lambda authorizer function name"
+    Value: !Ref MWAALambdaFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaFunctionName"
+  
+  MwaaAdminRoleArn:
+    Description: "IAM Role ARN for MWAA Admin users"
+    Value: !GetAtt MwaaAdminRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MwaaAdminRoleArn"
+  
+  MwaaUserRoleArn:
+    Description: "IAM Role ARN for MWAA User users"
+    Value: !GetAtt MwaaUserRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MwaaUserRoleArn"
+  
+  MwaaViewerRoleArn:
+    Description: "IAM Role ARN for MWAA Viewer users"
+    Value: !GetAtt MwaaViewerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MwaaViewerRoleArn"
+  
+  MwaaCustomRoleArn:
+    Description: "IAM Role ARN for MWAA Custom role users"
+    Value: !GetAtt MwaaCustomRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MwaaCustomRoleArn"

@@ -1,0 +1,6 @@
+# Lambda Layer Requirements for MWAA Authorizer v2
+# This layer provides psycopg2 for direct database access
+
+# PostgreSQL adapter for Python
+# Use psycopg2-binary for Lambda (includes compiled C libraries)
+psycopg2-binary==2.9.9

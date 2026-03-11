@@ -1,0 +1,33 @@
+{
+  "tenant_id": "YOUR_AZURE_TENANT_ID",
+  "client_id": "YOUR_AZURE_CLIENT_ID",
+  "object_id": "YOUR_AZURE_OBJECT_ID",
+  "client_secret": "YOUR_AZURE_CLIENT_SECRET",
+  "login_url": "https://login.microsoftonline.com/YOUR_AZURE_TENANT_ID/saml2",
+  "metadata_url": "https://login.microsoftonline.com/YOUR_AZURE_TENANT_ID/federationmetadata/2007-06/federationmetadata.xml",
+  "cognito": {
+    "user_pool_id": "us-east-1_XXXXXXXXX",
+    "domain": "your-stack-name-XXXXXXXXXXXX-domain",
+    "region": "us-east-1",
+    "cognito_domain_url": "https://your-stack-name-XXXXXXXXXXXX-domain.auth.us-east-1.amazoncognito.com",
+    "entity_id": "urn:amazon:cognito:sp:us-east-1_XXXXXXXXX",
+    "reply_url": "https://your-stack-name-XXXXXXXXXXXX-domain.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
+  },
+  "alb": {
+    "name": "your-stack-name-mwaa-alb",
+    "dns": "your-stack-name-mwaa-alb-XXXXXXXXXX.us-east-1.elb.amazonaws.com",
+    "url": "https://your-stack-name-mwaa-alb-XXXXXXXXXX.us-east-1.elb.amazonaws.com",
+    "mwaa_url": "https://your-stack-name-mwaa-alb-XXXXXXXXXX.us-east-1.elb.amazonaws.com/aws_mwaa/aws-console-sso"
+  },
+  "notes": {
+    "tenant_id": "Directory (tenant) ID from Azure AD",
+    "client_id": "Application (client) ID - use this for SAML configuration",
+    "object_id": "Object ID of the application",
+    "client_secret": "Client secret value - store securely, cannot be retrieved again",
+    "login_url": "Azure AD SAML login endpoint",
+    "metadata_url": "Federation metadata XML URL for Cognito configuration",
+    "entity_id": "SAML Entity ID for Azure AD configuration",
+    "reply_url": "SAML Reply URL (Assertion Consumer Service URL)",
+    "mwaa_url": "MWAA access URL through ALB"
+  }
+}

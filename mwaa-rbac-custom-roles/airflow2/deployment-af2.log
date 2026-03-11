@@ -1,0 +1,102 @@
+==========================================
+AWS MWAA Custom RBAC Solution Deployment
+==========================================
+
+[0;34m[INFO][0m Running all deployment steps
+
+[0;34m[INFO][0m Checking prerequisites...
+[0;32m[SUCCESS][0m All prerequisites met
+[0;34m[INFO][0m Parsing deployment configuration...
+[0;34m[INFO][0m VPC Stack Name: af2-1
+[0;34m[INFO][0m ALB Stack Name: af2-alb1
+[0;34m[INFO][0m MWAA Environment: mwaa-af2-1
+[0;34m[INFO][0m AWS Region: us-east-1
+[0;34m[INFO][0m Deploying VPC stack: af2-1
+[0;34m[INFO][0m Overriding MWAA environment name to: mwaa-af2-1
+[0;34m[INFO][0m Creating new stack: af2-1
+{
+    "StackId": "arn:aws:cloudformation:us-east-1:343218218212:stack/af2-1/d6a9e850-fd47-11f0-b2fd-126d9fac4c63"
+}
+[0;34m[INFO][0m Waiting for stack af2-1 to complete create/update...
+........................................[0;32m[SUCCESS][0m Stack af2-1 completed with status: CREATE_COMPLETE
+[0;32m[SUCCESS][0m VPC stack deployed successfully
+[0;34m[INFO][0m Getting S3 bucket name from VPC stack outputs...
+[0;32m[SUCCESS][0m S3 bucket name: af2-1-mwaa-343218218212
+[0;34m[INFO][0m Uploading Lambda function and DAG files to S3...
+[0;34m[INFO][0m Uploading lambda_mwaa-authorizer.py...
+Completed 19.4 KiB/19.4 KiB (108.5 KiB/s) with 1 file(s) remainingupload: lambda_auth/lambda_mwaa-authorizer.py to s3://af2-1-mwaa-343218218212/lambda-code/lambda_mwaa-authorizer.py
+[0;34m[INFO][0m Uploading DAG files...
+[0;34m[INFO][0m   - create_role_glue_job_dag.py (replacing {{VPC_STACK_NAME}} with af2-1)...
+[0;34m[INFO][0m   - update_user_role_dag.py...
+upload: role_creation_dag/update_user_role_dag.py to s3://af2-1-mwaa-343218218212/dags/update_user_role_dag.py
+[0;34m[INFO][0m   - hello_world_simple.py...
+Completed 1.6 KiB/1.6 KiB (8.6 KiB/s) with 1 file(s) remainingupload: sample_dags/hello_world_simple.py to s3://af2-1-mwaa-343218218212/dags/hello_world_simple.py
+[0;34m[INFO][0m   - hello_world_advanced.py...
+Completed 3.5 KiB/3.5 KiB (22.2 KiB/s) with 1 file(s) remainingupload: sample_dags/hello_world_advanced.py to s3://af2-1-mwaa-343218218212/dags/hello_world_advanced.py
+[0;32m[SUCCESS][0m Files uploaded successfully
+[0;34m[INFO][0m Building and deploying Lambda layer with psycopg2...
+[0;34m[INFO][0m Using S3 bucket: af2-1-mwaa-343218218212
+[0;34m[INFO][0m Building Docker image with Lambda runtime (this may take a few minutes)...
+[0;32m[SUCCESS][0m Docker image built successfully
+[0;34m[INFO][0m Extracting layer from Docker container...
+[0;34m[INFO][0m Creating layer zip file...
+[0;32m[SUCCESS][0m Lambda layer built successfully (Size: 3.0M)
+[0;34m[INFO][0m Uploading Lambda layer to S3...
+Completed 1.0 MiB/3.0 MiB (8.0 MiB/s) with 1 file(s) remainingCompleted 2.0 MiB/3.0 MiB (5.8 MiB/s) with 1 file(s) remainingCompleted 3.0 MiB/3.0 MiB (7.2 MiB/s) with 1 file(s) remainingupload: lambda_auth/psycopg2-layer.zip to s3://af2-1-mwaa-343218218212/lambda-layers/psycopg2-layer.zip
+[0;32m[SUCCESS][0m Lambda layer uploaded to S3
+[0;34m[INFO][0m Publishing Lambda layer...
+[0;32m[SUCCESS][0m Lambda layer published successfully
+[0;34m[INFO][0m Layer ARN: arn:aws:lambda:us-east-1:343218218212:layer:mwaa-psycopg2:3
+[0;34m[INFO][0m Layer Version: 3
+[1;33m[WARNING][0m Lambda function not found (ALB stack may not be deployed yet)
+[0;34m[INFO][0m After deploying the ALB stack, attach the layer with:
+  aws lambda update-function-configuration \
+    --function-name YOUR-LAMBDA-FUNCTION \
+    --layers arn:aws:lambda:us-east-1:343218218212:layer:mwaa-psycopg2:3
+[0;32m[SUCCESS][0m Lambda layer deployment completed
+[0;34m[INFO][0m Deploying ALB stack: af2-alb1
+[0;34m[INFO][0m Creating new stack: af2-alb1
+{
+    "StackId": "arn:aws:cloudformation:us-east-1:343218218212:stack/af2-alb1/e4fa9500-fd4a-11f0-a11a-0e4d40153481"
+}
+[0;34m[INFO][0m Waiting for stack af2-alb1 to complete create/update...
+..........[0;32m[SUCCESS][0m Stack af2-alb1 completed with status: CREATE_COMPLETE
+[0;32m[SUCCESS][0m ALB stack deployed successfully
+[0;34m[INFO][0m Updating Lambda function environment variables...
+[0;34m[INFO][0m Lambda Function: af2-alb1-mwaa-lambda-function
+[0;34m[INFO][0m Updating GROUP_TO_ROLE_MAP...
+[0;32m[SUCCESS][0m Lambda environment variables updated successfully
+[0;34m[INFO][0m GROUP_TO_ROLE_MAP configured with:
+  - Admin Group (018b2f48-edd5-49fb-9541-4cef1b43ff3e) → af2-alb1-MwaaAdminRole-k3TJ69k7ODfV → Admin
+  - User Group (737f6c94-bf1d-4079-a726-6b50db58f558) → af2-alb1-MwaaUserRole-AvJaVGNtgJYx → User
+  - Viewer Group (8c330ba0-f0c5-4b80-a351-3e7bb29d9741) → af2-alb1-MwaaViewerRole-GGYQ8RpzEbzX → Viewer
+  - Custom Group (a3255ab9-b779-405d-8a65-baafac5fc071) → af2-alb1-MwaaCustomRole-aoyjpdveiY74 → MWAARestrictedTest
+[0;32m[SUCCESS][0m Deployment completed successfully!
+
+[0;34m[INFO][0m Stack Information:
+  VPC Stack: af2-1
+  ALB Stack: af2-alb1
+
+[0;34m[INFO][0m Access URL: https://af2-1-mwaa-alb-1227179001.us-east-1.elb.amazonaws.com/aws_mwaa/aws-console-sso
+[0;34m[INFO][0m MWAA Environment: mwaa-af2-1
+[0;34m[INFO][0m Lambda Function: af2-alb1-mwaa-lambda-function
+
+[0;34m[INFO][0m IAM Role ARNs (for Lambda GROUP_TO_ROLE_MAP):
+----------------------------------------------------------------------------------------------
+|                                       DescribeStacks                                       |
++-----------------------------------------------------------------------+--------------------+
+|                                  ARN                                  |       Role         |
++-----------------------------------------------------------------------+--------------------+
+|  arn:aws:iam::343218218212:role/af2-alb1-MwaaViewerRole-GGYQ8RpzEbzX  |  MwaaViewerRoleArn |
+|  arn:aws:iam::343218218212:role/af2-alb1-MwaaUserRole-AvJaVGNtgJYx    |  MwaaUserRoleArn   |
+|  arn:aws:iam::343218218212:role/af2-alb1-MwaaCustomRole-aoyjpdveiY74  |  MwaaCustomRoleArn |
+|  arn:aws:iam::343218218212:role/af2-alb1-MwaaAdminRole-k3TJ69k7ODfV   |  MwaaAdminRoleArn  |
++-----------------------------------------------------------------------+--------------------+
+
+[0;34m[INFO][0m Next Steps:
+1. Configure your Azure AD/Cognito identity provider
+2. Test the authentication flow
+3. Create custom MWAA roles using the create_role_glue_job_dag with config:
+   {"stack_name": "af2-1", "source_role": "User", "target_role": "Restricted"}
+
+[0;34m[INFO][0m For troubleshooting, check the README.md file
