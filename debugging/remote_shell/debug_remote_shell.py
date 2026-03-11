@@ -14,7 +14,8 @@ This DAG creates a pseudo-interactive shell by:
 This simulates SSH access without needing actual SSH connectivity or EC2 instances.
 
 Setup:
-1. Set S3_BUCKET variable below to your MWAA bucket
+1. Set the Airflow Variable "s3_bucket" to your MWAA bucket name
+   (Admin > Variables in the UI, or: airflow variables set s3_bucket YOUR_BUCKET)
 2. Trigger the DAG
 3. Upload commands to: s3://YOUR_BUCKET/debug-shell/commands/command_TIMESTAMP.txt
 4. Check results in: s3://YOUR_BUCKET/debug-shell/results/result_TIMESTAMP.txt
@@ -30,6 +31,7 @@ Quick Start Example:
 """
 
 from airflow import DAG
+from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import time
@@ -39,12 +41,14 @@ import sys
 import socket
 
 # ============================================================================
-# CONFIGURATION - UPDATE THIS!
+# CONFIGURATION
 # ============================================================================
-S3_BUCKET = "your-mwaa-s3-bucket-name"
+# S3_BUCKET is read from the Airflow Variable "s3_bucket" at task runtime.
+# Set it via the Airflow UI (Admin > Variables) or CLI:
+#   airflow variables set s3_bucket your-mwaa-s3-bucket-name
+# ============================================================================
 S3_COMMAND_PREFIX = "debug-shell/commands/"
 S3_RESULT_PREFIX = "debug-shell/results/"
-# ============================================================================
 
 default_args = {
     'owner': 'airflow',
@@ -61,6 +65,8 @@ def remote_shell_session(**context):
     """
     import boto3
     from botocore.exceptions import ClientError
+    
+    S3_BUCKET = Variable.get("s3_bucket")
     
     print("=" * 80)
     print("🖥️  REMOTE SHELL SESSION STARTED")
@@ -298,6 +304,8 @@ Exit Code: {result.returncode}
 def setup_s3_folders(**context):
     """Create S3 folders for command/result exchange"""
     import boto3
+    
+    S3_BUCKET = Variable.get("s3_bucket")
     
     print(f"Setting up S3 folders in bucket: {S3_BUCKET}")
     
